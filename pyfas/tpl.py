@@ -127,8 +127,7 @@ class Tpl:
         path = os.getcwd()
         fname = self.fname.replace(".tpl", "_tpl") + ".xlsx"
         idxs = self.filter_trends("")
-        for idx in idxs:
-            self.extract(idx)
+        self.extract(*idxs)          # all trends in a single pass over the file
         data_df = pd.DataFrame(self.data)
         data_df.columns = self.label.values()
         data_df.insert(0, "Time [s]", self.time)

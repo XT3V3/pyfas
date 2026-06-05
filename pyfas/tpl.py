@@ -4,7 +4,6 @@ Tpl class
 
 import os
 import re
-import numpy as np
 import pandas as pd
 from collections import OrderedDict
 
@@ -59,27 +58,24 @@ class Tpl:
 
     def extract(self, *args):
         """
-        Extract a specific variable
+        Extract one or more variables in a single pass over the file
         """
-        self.time = np.loadtxt(self.abspath,
-                               skiprows=self._attributes['data_idx']+1,
-                               unpack=True, usecols=(0,))
+        cols = (0,) + args                       # column 0 is the time column
+        sorted_cols = sorted(set(cols))
+        arr = pd.read_csv(self.abspath,
+                          skiprows=self._attributes['data_idx']+1,
+                          delim_whitespace=True,  # C engine, fast
+                          header=None,
+                          usecols=sorted_cols,
+                          dtype=float).values
+        # usecols always returns columns in ascending file order, so map each
+        # requested column to its position in the resulting array
+        pos = {c: i for i, c in enumerate(sorted_cols)}
+        self.time = arr[:, pos[0]]
         for variable_idx in args:
-            data = np.loadtxt(self.abspath,
-                              skiprows=self._attributes['data_idx']+1,
-                              unpack=True,
-                              usecols=(variable_idx,))
-            with open(self.abspath) as fobj:
-                for idx, line in enumerate(fobj):
-                    if idx == 1 + variable_idx+self._attributes['CATALOG']:
-                        try:
-                            self.data[variable_idx] = data[:len(self.time)]
-                        except TypeError:
-                            self.data[variable_idx] = data.base
-                        self.label[variable_idx] = line.replace("\'",
-                                                                '').replace("\n",
-                                                                            "")
-                        break
+            self.data[variable_idx] = arr[:, pos[variable_idx]]
+            self.label[variable_idx] = self.trends[variable_idx].replace(
+                "\'", '').replace("\n", "")
 
     def view_trends(self, pattern=''):
         """

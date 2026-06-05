@@ -34,26 +34,24 @@ class Ppl:
         self.profiles = {}
         self.geometries = {}
         with open(self.abspath) as fobj:
-            for idx, line in enumerate(fobj):
-                if 'CATALOG' in line:
-                    self._attributes['CATALOG'] = idx
-                    nvar_idx = idx+1
-                if 'TIME SERIES' in line:
-                    self._attributes['data_idx'] = idx
-                    break
-                if 'CATALOG' in self._attributes:
-                    adj_idx = idx-self._attributes['CATALOG']-1
-                    if adj_idx > 0:
-                        self.profiles[adj_idx] = line
-                if 'BRANCH\n' in line:
-                    self._attributes['branch_idx'].append(idx+1)
-        with open(self.abspath) as fobj:
-            self._attributes['nvar'] = int(fobj.readlines()[nvar_idx])
+            self._lines = fobj.readlines()
+        for idx, line in enumerate(self._lines):
+            if 'CATALOG' in line:
+                self._attributes['CATALOG'] = idx
+                nvar_idx = idx+1
+            if 'TIME SERIES' in line:
+                self._attributes['data_idx'] = idx
+                break
+            if 'CATALOG' in self._attributes:
+                adj_idx = idx-self._attributes['CATALOG']-1
+                if adj_idx > 0:
+                    self.profiles[adj_idx] = line
+            if 'BRANCH\n' in line:
+                self._attributes['branch_idx'].append(idx+1)
+        self._attributes['nvar'] = int(self._lines[nvar_idx])
         self._time_series()
-        with open(self.abspath) as fobj:
-            text = fobj.readlines()
         for branch_idx in self._attributes['branch_idx']:
-            branch_raw = text[branch_idx]
+            branch_raw = self._lines[branch_idx]
             branch = branch_raw.replace("\'", '').replace("\n", '')
             self.extract_geometry(branch, branch_idx+2)
 
@@ -64,11 +62,10 @@ class Ppl:
 
 
     def _time_series(self):
-        with open(self.abspath) as fobj:
-            self.time = []
-            for line in fobj.readlines()[1+self._attributes['data_idx']::
-                                         self._attributes['nvar']+1]:
-                self.time.append(float(line))
+        self.time = []
+        for line in self._lines[1+self._attributes['data_idx']::
+                                self._attributes['nvar']+1]:
+            self.time.append(float(line))
 
 
     def filter_data(self, pattern=''):
@@ -76,12 +73,11 @@ class Ppl:
         Filter available varaibles
         """
         filtered_profiles = {}
-        with open(self.abspath) as fobj:
-            for idx, line in enumerate(fobj):
-                if 'TIME SERIES' in line:
-                    break
-                if pattern in line and (idx-self._attributes['CATALOG']-1) > 0:
-                    filtered_profiles[idx-self._attributes['CATALOG']-1] = line
+        for idx, line in enumerate(self._lines):
+            if 'TIME SERIES' in line:
+                break
+            if pattern in line and (idx-self._attributes['CATALOG']-1) > 0:
+                filtered_profiles[idx-self._attributes['CATALOG']-1] = line
         return filtered_profiles
 
 
@@ -95,17 +91,16 @@ class Ppl:
         It adds to self.geometries a specific geometry as (x, y)
         """
         raw_geometry = []
-        with open(self.abspath) as fobj:
-            for line in fobj.readlines()[branch_begin:]:
-                points = []
-                for point in line.split(' '):
-                    try:
-                        points.append(float(point))
-                    except ValueError:
-                        pass
-                raw_geometry.extend(points)
-                if re.search(r"[A-DF-Z]", line) is not None:
-                    break
+        for line in self._lines[branch_begin:]:
+            points = []
+            for point in line.split(' '):
+                try:
+                    points.append(float(point))
+                except ValueError:
+                    pass
+            raw_geometry.extend(points)
+            if re.search(r"[A-DF-Z]", line) is not None:
+                break
         xy_geo = raw_geometry
         self.geometries[branch] = (xy_geo[:int(len(xy_geo)/2)],
                                    xy_geo[int(len(xy_geo)/2):])
@@ -119,17 +114,16 @@ class Ppl:
         label = self.profiles[variable_idx].replace("\n", "")
         self.label[variable_idx] = label
         self.data[variable_idx] = [[], []]
-        with open(self.abspath) as fobj:
-            for line in fobj.readlines()[
-                    variable_idx+1+self._attributes['data_idx']::
-                    self._attributes['nvar']+1]:
-                points = []
-                for point in line.split(' '):
-                    try:
-                        points.append(float(point))
-                    except ValueError:
-                        pass
-                self.data[variable_idx][1].append(np.array(points))
+        for line in self._lines[
+                variable_idx+1+self._attributes['data_idx']::
+                self._attributes['nvar']+1]:
+            points = []
+            for point in line.split(' '):
+                try:
+                    points.append(float(point))
+                except ValueError:
+                    pass
+            self.data[variable_idx][1].append(np.array(points))
         x_st = self.geometries[branch][0]
         x_no_st = [(x0+x1)/2 for x0, x1 in zip(x_st[:-1], x_st[1:])]
         if len(self.data[variable_idx][1][0]) == len(x_st):
@@ -148,21 +142,25 @@ class Ppl:
             path = args[0]
             if os.path.exists(path) == False:
                 os.mkdir(path)
-        xl_file = pd.ExcelWriter(path + os.sep + fname)
+        labels = list(self.filter_data("").values())
+        # self.data holds the nested {branch: {var: ...}} dict after __init__,
+        # so work on a clean dict of per-variable profiles and restore it after
+        saved_data = self.data
+        self.data = {}
         for idx in self.filter_data(""):
             self.extract(idx)
-        labels = list(self.filter_data("").values())
-        for prof in self.data:
-            data_df = pd.DataFrame()
-            data_df["X"] = self.data[prof][0]
-            for timestep, data in zip(self.time, self.data[prof][1]):
-                data_df[timestep] = data
-            myvar = labels[prof-1].split(" ")[0]
-            br_label = labels[prof-1].split("\'")[5]
-            unit = labels[prof-1].split("\'")[7].replace("/", "-")
-            mylabel = "{} - {} - {}".format(myvar, br_label, unit)
-            data_df.to_excel(xl_file, sheet_name=mylabel)
-        xl_file.save()
+        with pd.ExcelWriter(path + os.sep + fname) as xl_file:
+            for prof in self.data:
+                data_df = pd.DataFrame()
+                data_df["X"] = self.data[prof][0]
+                for timestep, data in zip(self.time, self.data[prof][1]):
+                    data_df[timestep] = data
+                myvar = labels[prof-1].split(" ")[0]
+                br_label = labels[prof-1].split("\'")[5]
+                unit = labels[prof-1].split("\'")[7].replace("/", "-")
+                mylabel = "{} - {} - {}".format(myvar, br_label, unit)
+                data_df.to_excel(xl_file, sheet_name=mylabel)
+        self.data = saved_data
 
 
     def _find_all_branches(self) -> list:

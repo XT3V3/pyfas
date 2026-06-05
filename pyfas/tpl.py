@@ -4,8 +4,23 @@ Tpl class
 
 import os
 import re
+import warnings
 import pandas as pd
 from collections import OrderedDict
+
+
+def _whitespace_read_kwargs():
+    """
+    read_csv kwargs for whitespace-delimited data, picking the fastest
+    option available for the installed pandas version:
+
+    pandas < 3.0 : delim_whitespace=True keeps the fast C engine
+    pandas >= 3.0: delim_whitespace was removed, fall back to sep=r"\\s+"
+    """
+    major = int(pd.__version__.split(".")[0])
+    if major >= 3:
+        return {"sep": r"\s+"}
+    return {"delim_whitespace": True}
 
 
 class Tpl:
@@ -62,12 +77,16 @@ class Tpl:
         """
         cols = (0,) + args                       # column 0 is the time column
         sorted_cols = sorted(set(cols))
-        arr = pd.read_csv(self.abspath,
-                          skiprows=self._attributes['data_idx']+1,
-                          delim_whitespace=True,  # C engine, fast
-                          header=None,
-                          usecols=sorted_cols,
-                          dtype=float).values
+        with warnings.catch_warnings():
+            # delim_whitespace=True is deprecated (FutureWarning) on pandas
+            # 2.2-2.x but is still the fast C-engine path, so silence the notice
+            warnings.simplefilter("ignore", FutureWarning)
+            arr = pd.read_csv(self.abspath,
+                              skiprows=self._attributes['data_idx']+1,
+                              header=None,
+                              usecols=sorted_cols,
+                              dtype=float,
+                              **_whitespace_read_kwargs()).values
         # usecols always returns columns in ascending file order, so map each
         # requested column to its position in the resulting array
         pos = {c: i for i, c in enumerate(sorted_cols)}
